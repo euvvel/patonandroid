@@ -49,13 +49,9 @@ jobs:
         )
         
         func main() {
-            log.Printf("╔════════════════════════════════════════════════════════╗")
-            log.Printf("║     SNI Spoof Proxy - DPI Bypass                        ║")
-            log.Printf("╠════════════════════════════════════════════════════════╣")
-            log.Printf("║ Target: %s:%d", TARGET_IP, TARGET_PORT)
-            log.Printf("║ Fake SNI: %s", FAKE_SNI)
-            log.Printf("║ Proxy: 127.0.0.1:%d", PROXY_PORT)
-            log.Printf("╚════════════════════════════════════════════════════════╝")
+            log.Printf("SNI Spoof Proxy starting...")
+            log.Printf("Target: %s:%d, Fake SNI: %s", TARGET_IP, TARGET_PORT, FAKE_SNI)
+            log.Printf("Proxy listening on 127.0.0.1:%d", PROXY_PORT)
             
             go performSpoof()
             startProxy()
@@ -66,31 +62,24 @@ jobs:
             targetAddr := fmt.Sprintf("%s:%d", TARGET_IP, TARGET_PORT)
             
             fakeConn, _ := net.DialTimeout("tcp", targetAddr, 5*time.Second)
-            fakeTLS := tls.Client(fakeConn, &tls.Config{
-                ServerName: FAKE_SNI,
-                InsecureSkipVerify: true,
-            })
+            fakeTLS := tls.Client(fakeConn, &tls.Config{ServerName: FAKE_SNI, InsecureSkipVerify: true})
             go fakeTLS.Handshake()
             time.Sleep(50 * time.Millisecond)
             fakeConn.Close()
-            log.Printf("📤 Fake ClientHello sent (SNI: %s)", FAKE_SNI)
+            log.Printf("Fake ClientHello sent")
             
             time.Sleep(100 * time.Millisecond)
             
             realConn, _ := net.DialTimeout("tcp", targetAddr, 5*time.Second)
             defer realConn.Close()
-            realTLS := tls.Client(realConn, &tls.Config{
-                ServerName: FAKE_SNI,
-                InsecureSkipVerify: true,
-            })
+            realTLS := tls.Client(realConn, &tls.Config{ServerName: FAKE_SNI, InsecureSkipVerify: true})
             if err := realTLS.Handshake(); err == nil {
-                log.Printf("✅✅✅ DPI WHITELISTED! ✅✅✅")
+                log.Printf("SUCCESS! DPI WHITELISTED!")
             }
         }
         
         func startProxy() {
             listener, _ := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", PROXY_PORT))
-            log.Printf("🟢 Proxy listening on 127.0.0.1:%d", PROXY_PORT)
             for {
                 client, _ := listener.Accept()
                 go handle(client)
@@ -103,10 +92,7 @@ jobs:
             target, _ := net.DialTimeout("tcp", targetAddr, 10*time.Second)
             defer target.Close()
             
-            tlsTarget := tls.Client(target, &tls.Config{
-                ServerName: FAKE_SNI,
-                InsecureSkipVerify: true,
-            })
+            tlsTarget := tls.Client(target, &tls.Config{ServerName: FAKE_SNI, InsecureSkipVerify: true})
             tlsTarget.Handshake()
             
             go io.Copy(tlsTarget, client)
@@ -118,18 +104,15 @@ jobs:
         GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -o sni_proxy sni.go
         
         # ============================================
-        # 2. CREATE ANDROID APK WRAPPER
+        # 2. CREATE PURE JAVA ANDROID APP (NO KOTLIN)
         # ============================================
         mkdir -p app/src/main/assets
         mkdir -p app/src/main/java/com/snispoof
-        mkdir -p app/src/main/res/values
-        
         cp sni_proxy app/src/main/assets/
         
-        # AndroidManifest
         cat > app/src/main/AndroidManifest.xml << 'EOF'
         <?xml version="1.0" encoding="utf-8"?>
-        <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.snispoof">
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <uses-permission android:name="android.permission.INTERNET" />
             <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
             <application android:label="SNI Spoof" android:usesCleartextTraffic="true">
@@ -144,89 +127,100 @@ jobs:
         </manifest>
         EOF
         
-        # MainActivity
-        cat > app/src/main/java/com/snispoof/MainActivity.kt << 'EOF'
-        package com.snispoof
-        import android.content.Intent
-        import android.os.Bundle
-        import android.widget.Button
-        import android.widget.LinearLayout
-        import android.widget.TextView
-        import androidx.appcompat.app.AppCompatActivity
+        cat > app/src/main/java/com/snispoof/MainActivity.java << 'EOF'
+        package com.snispoof;
+        import android.content.Intent;
+        import android.os.Bundle;
+        import android.widget.Button;
+        import android.widget.LinearLayout;
+        import android.widget.TextView;
+        import androidx.appcompat.app.AppCompatActivity;
         
-        class MainActivity : AppCompatActivity() {
-            override fun onCreate(savedInstanceState: Bundle?) {
-                super.onCreate(savedInstanceState)
-                val layout = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(50, 50, 50, 50)
-                }
-                val status = TextView(this).apply {
-                    text = "SNI Spoof Proxy\nStatus: STOPPED\n\nProxy: 127.0.0.1:40443\nForced SNI: www.hcaptcha.com"
-                    textSize = 16f
-                    setPadding(0, 0, 0, 30)
-                }
-                val startBtn = Button(this).apply {
-                    text = "START PROXY"
-                    textSize = 18f
-                    setOnClickListener {
-                        startForegroundService(Intent(this@MainActivity, ProxyService::class.java))
-                        status.text = "SNI Spoof Proxy\nStatus: RUNNING\n\nProxy active on 127.0.0.1:40443\nConfigure v2ray to use this port"
-                        isEnabled = false
-                    }
-                }
-                layout.addView(status)
-                layout.addView(startBtn)
-                setContentView(layout)
+        public class MainActivity extends AppCompatActivity {
+            @Override
+            protected void onCreate(Bundle savedInstanceState) {
+                super.onCreate(savedInstanceState);
+                LinearLayout layout = new LinearLayout(this);
+                layout.setOrientation(LinearLayout.VERTICAL);
+                layout.setPadding(50, 50, 50, 50);
+                
+                TextView status = new TextView(this);
+                status.setText("SNI Spoof Proxy\nStatus: STOPPED\n\nProxy: 127.0.0.1:40443\nForced SNI: www.hcaptcha.com");
+                status.setTextSize(16);
+                status.setPadding(0, 0, 0, 30);
+                
+                Button startBtn = new Button(this);
+                startBtn.setText("START PROXY");
+                startBtn.setTextSize(18);
+                startBtn.setOnClickListener(v -> {
+                    startForegroundService(new Intent(this, ProxyService.class));
+                    status.setText("SNI Spoof Proxy\nStatus: RUNNING\n\nProxy active on 127.0.0.1:40443");
+                    startBtn.setEnabled(false);
+                });
+                
+                layout.addView(status);
+                layout.addView(startBtn);
+                setContentView(layout);
             }
         }
         EOF
         
-        # ProxyService
-        cat > app/src/main/java/com/snispoof/ProxyService.kt << 'EOF'
-        package com.snispoof
-        import android.app.Notification
-        import android.app.NotificationChannel
-        import android.app.NotificationManager
-        import android.app.Service
-        import android.content.Intent
-        import android.os.Build
-        import android.os.IBinder
-        import java.io.File
+        cat > app/src/main/java/com/snispoof/ProxyService.java << 'EOF'
+        package com.snispoof;
+        import android.app.Notification;
+        import android.app.NotificationChannel;
+        import android.app.NotificationManager;
+        import android.app.Service;
+        import android.content.Intent;
+        import android.os.Build;
+        import android.os.IBinder;
+        import java.io.File;
+        import java.io.InputStream;
+        import java.io.OutputStream;
         
-        class ProxyService : Service() {
-            private var process: Process? = null
+        public class ProxyService extends Service {
+            private Process process;
             
-            override fun onCreate() {
-                super.onCreate()
+            @Override
+            public void onCreate() {
+                super.onCreate();
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val channel = NotificationChannel("sni_channel", "SNI Spoof", NotificationManager.IMPORTANCE_LOW)
-                    getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+                    NotificationChannel channel = new NotificationChannel("sni_channel", "SNI Spoof", NotificationManager.IMPORTANCE_LOW);
+                    getSystemService(NotificationManager.class).createNotificationChannel(channel);
                 }
-                startForeground(1, Notification.Builder(this, "sni_channel")
+                startForeground(1, new Notification.Builder(this, "sni_channel")
                     .setContentTitle("SNI Spoof Proxy")
                     .setContentText("Running on 127.0.0.1:40443")
                     .setSmallIcon(android.R.drawable.ic_menu_share)
-                    .build())
+                    .build());
                 
-                val binary = File(filesDir, "sni_proxy")
-                if (!binary.exists()) {
-                    assets.open("sni_proxy").use { input ->
-                        binary.outputStream().use { output ->
-                            input.copyTo(output)
+                try {
+                    File binary = new File(getFilesDir(), "sni_proxy");
+                    if (!binary.exists()) {
+                        try (InputStream in = getAssets().open("sni_proxy");
+                             OutputStream out = binary.openOutputStream()) {
+                            byte[] buffer = new byte[8192];
+                            int len;
+                            while ((len = in.read(buffer)) > 0) {
+                                out.write(buffer, 0, len);
+                            }
                         }
                     }
+                    binary.setExecutable(true);
+                    process = Runtime.getRuntime().exec(binary.getAbsolutePath());
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
-                binary.setExecutable(true)
-                process = Runtime.getRuntime().exec(arrayOf(binary.absolutePath))
             }
             
-            override fun onDestroy() {
-                process?.destroy()
-                super.onDestroy()
+            @Override
+            public void onDestroy() {
+                if (process != null) process.destroy();
+                super.onDestroy();
             }
             
-            override fun onBind(intent: Intent?): IBinder? = null
+            @Override
+            public IBinder onBind(Intent intent) { return null; }
         }
         EOF
         
@@ -250,7 +244,7 @@ jobs:
         include ':app'
         EOF
         
-        # Project build.gradle (with repositories in buildscript)
+        # build.gradle (no Kotlin plugin)
         cat > build.gradle << 'EOF'
         buildscript {
             repositories {
@@ -259,16 +253,14 @@ jobs:
             }
             dependencies {
                 classpath 'com.android.tools.build:gradle:8.5.0'
-                classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0'
             }
         }
         EOF
         
-        # App build.gradle
+        # app/build.gradle (pure Java, no Kotlin)
         cat > app/build.gradle << 'EOF'
         plugins {
             id 'com.android.application'
-            id 'org.jetbrains.kotlin.android'
         }
         
         android {
@@ -283,6 +275,11 @@ jobs:
                 versionName "1.0"
             }
             
+            compileOptions {
+                sourceCompatibility JavaVersion.VERSION_17
+                targetCompatibility JavaVersion.VERSION_17
+            }
+            
             buildTypes {
                 release {
                     minifyEnabled false
@@ -292,7 +289,6 @@ jobs:
         
         dependencies {
             implementation 'androidx.appcompat:appcompat:1.6.1'
-            implementation 'androidx.core:core-ktx:1.12.0'
         }
         EOF
         
@@ -300,6 +296,7 @@ jobs:
         cat > gradle.properties << 'EOF'
         org.gradle.jvmargs=-Xmx2048m
         android.useAndroidX=true
+        android.nonTransitiveRClass=true
         EOF
         
         # gradle wrapper
@@ -318,7 +315,6 @@ jobs:
         zipStorePath=wrapper/dists
         EOF
         
-        # Download gradle-wrapper.jar
         curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar
         
         # ============================================
