@@ -6,6 +6,9 @@ import (
     "io"
     "net"
     "time"
+    
+
+    _ "golang.org/x/mobile/bind"
 )
 
 // It sends a fake ClientHello, aborts, waits, then verifies the connection is whitelisted
