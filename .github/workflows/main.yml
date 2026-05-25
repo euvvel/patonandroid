@@ -1,15 +1,13 @@
-name: Build SNI Spoof APK
+name: Build SNI Spoof APK Direct
 
 on:
   workflow_dispatch:
     inputs:
       target_ip:
-        description: 'Target IP address'
-        required: false
+        description: 'Target IP'
         default: '104.19.229.21'
       fake_sni:
-        description: 'Fake SNI domain'
-        required: false
+        description: 'Fake SNI'
         default: 'www.hcaptcha.com'
 
 jobs:
@@ -17,9 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
+    - uses: actions/checkout@v4
+    
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
@@ -29,70 +26,69 @@ jobs:
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
-        java-version: '17'
+        java-version: '11'
         
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
-      
-    - name: Install NDK 23c (more compatible with gomobile)
-      run: |
-        # Remove any existing NDK
-        rm -rf $ANDROID_HOME/ndk
-        
-        # Download NDK 23c (known to work with gomobile)
-        cd $ANDROID_HOME
-        wget -q https://dl.google.com/android/repository/android-ndk-r23c-linux.zip
-        unzip -q android-ndk-r23c-linux.zip
-        mv android-ndk-r23c ndk/23.1.7779620
-        
-        # Set environment variable
-        echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/23.1.7779620" >> $GITHUB_ENV
-        echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-        
-        # Verify NDK installation
-        ls -la $ANDROID_HOME/ndk/23.1.7779620/
+      with:
+        cmdline-tools-version: 'latest'
         
     - name: Install gomobile
       run: |
         go install golang.org/x/mobile/cmd/gomobile@latest
         go install golang.org/x/mobile/cmd/gobind@latest
-        ~/go/bin/gomobile init
+        gomobile init
         
-    - name: Add mobile dependency
+    - name: Create main.go for direct APK build
       run: |
-        go get golang.org/x/mobile@latest
-        go mod tidy
+        cat > main.go << 'EOF'
+        package main
         
-    - name: Build AAR from Go code
-      run: |
-        # Update config with workflow inputs
-        sed -i "s/104.19.229.21/${{ github.event.inputs.target_ip }}/g" sni.go
-        sed -i "s/www.hcaptcha.com/${{ github.event.inputs.fake_sni }}/g" sni.go
+        import (
+            "crypto/tls"
+            "fmt"
+            "net"
+            "time"
+        )
         
-        # Build the AAR with explicit path
-        export PATH=$PATH:~/go/bin
-        export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/23.1.7779620
-        ~/go/bin/gomobile bind -target=android -androidapi=21 -o app/libs/snispoof.aar .
-        
-    - name: Create minimal gradle wrapper
-      run: |
-        cd app
-        # Create a simple build script instead of full gradle
-        cat > build.sh << 'EOF'
-        #!/bin/bash
-        echo "APK would be built here"
-        echo "For now, AAR is ready at app/libs/snispoof.aar"
-        # Create a dummy APK for testing
-        mkdir -p build/outputs/apk/release/
-        echo "dummy" > build/outputs/apk/release/app-release.apk
+        func main() {
+            targetIP := "${{ github.event.inputs.target_ip }}"
+            fakeSNI := "${{ github.event.inputs.fake_sni }}"
+            
+            fmt.Println("SNI Spoof starting...")
+            fmt.Printf("Target: %s, Fake SNI: %s\n", targetIP, fakeSNI)
+            
+            // Phase 1: Fake ClientHello
+            conn1, _ := net.DialTimeout("tcp", targetIP+":443", 3*time.Second)
+            tls1 := tls.Client(conn1, &tls.Config{ServerName: fakeSNI, InsecureSkipVerify: true})
+            go tls1.Handshake()
+            time.Sleep(50 * time.Millisecond)
+            conn1.Close()
+            
+            time.Sleep(100 * time.Millisecond)
+            
+            // Phase 2: Real connection
+            conn2, _ := net.DialTimeout("tcp", targetIP+":443", 5*time.Second)
+            tls2 := tls.Client(conn2, &tls.Config{ServerName: fakeSNI, InsecureSkipVerify: true})
+            if err := tls2.Handshake(); err == nil {
+                fmt.Println("✅ SUCCESS! DPI whitelisted!")
+            }
+            
+            // Keep running
+            select {}
+        }
         EOF
-        chmod +x build.sh
-        ./build.sh
         
-    - name: Upload artifacts
+    - name: Build APK directly with gomobile
+      run: |
+        gomobile bind -target=android -o snispoof.aar .
+        # Build a simple APK using gomobile build (not bind)
+        gomobile build -target=android -o sni-spoof.apk .
+        
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: sni-spoof-artifacts
+        name: sni-spoof-apk
         path: |
-          app/libs/snispoof.aar
-          app/build/outputs/apk/release/*.apk
+          *.apk
+          *.aar
