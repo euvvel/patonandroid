@@ -27,7 +27,7 @@ jobs:
     - name: Build everything
       run: |
         # ============================================
-        # 1. CREATE GO SNI SPOOF BINARY (MULTI-ARCH)
+        # 1. CREATE GO SNI SPOOF BINARY
         # ============================================
         cat > sni.go << 'EOF'
         package main
@@ -70,7 +70,6 @@ jobs:
             targetAddr := fmt.Sprintf("%s:%d", TARGET_IP, TARGET_PORT)
             log.Printf("Starting spoof sequence to %s", targetAddr)
             
-            // Phase 1: Fake ClientHello
             fakeConn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
             if err != nil {
                 log.Printf("Fake connection error: %v", err)
@@ -82,10 +81,8 @@ jobs:
             fakeConn.Close()
             log.Printf("Fake ClientHello sent")
             
-            // Phase 2: Wait
             time.Sleep(100 * time.Millisecond)
             
-            // Phase 3: Verify
             realConn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
             if err != nil {
                 log.Printf("Real connection error: %v", err)
@@ -135,26 +132,26 @@ jobs:
         }
         EOF
         
-        # Build for multiple architectures
-        mkdir -p app/src/main/assets/armeabi-v7a
-        mkdir -p app/src/main/assets/arm64-v8a
-        mkdir -p app/src/main/assets/x86
-        mkdir -p app/src/main/assets/x86_64
+        # Build for Android - using pure Go without CGO
+        # Use GOARCH=arm64 with GOARM=7 for better compatibility
+        mkdir -p app/src/main/assets
         
-        # ARM64 (most common)
-        GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -o app/src/main/assets/arm64-v8a/sni_proxy sni.go
+        # Try building with different flags
+        CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -tags netgo -ldflags="-w -s" -o sni_proxy sni.go || \
+        CGO_ENABLED=0 GOOS=android GOARCH=arm GOARM=7 go build -tags netgo -ldflags="-w -s" -o sni_proxy sni.go || \
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o sni_proxy sni.go
         
-        # ARM32 (older devices)
-        GOOS=android GOARCH=arm CGO_ENABLED=0 go build -o app/src/main/assets/armeabi-v7a/sni_proxy sni.go
-        
-        # x86 (emulators)
-        GOOS=android GOARCH=386 CGO_ENABLED=0 go build -o app/src/main/assets/x86/sni_proxy sni.go
-        
-        # x86_64
-        GOOS=android GOARCH=amd64 CGO_ENABLED=0 go build -o app/src/main/assets/x86_64/sni_proxy sni.go
+        # Check if build succeeded
+        if [ -f sni_proxy ]; then
+            file sni_proxy
+            cp sni_proxy app/src/main/assets/
+        else
+            echo "Build failed"
+            exit 1
+        fi
         
         # ============================================
-        # 2. CREATE ANDROID APP
+        # 2. CREATE SIMPLE ANDROID APP
         # ============================================
         mkdir -p app/src/main/java/com/snispoof
         
@@ -202,8 +199,7 @@ jobs:
                 layout.setPadding(50, 50, 50, 50);
                 
                 status = new TextView(this);
-                String arch = System.getProperty("os.arch");
-                status.setText("SNI Spoof Proxy\nStatus: STOPPED\nArchitecture: " + arch + "\n\nProxy: 127.0.0.1:40443\nForced SNI: www.hcaptcha.com\n\nUse v2ray/HTTP Custom with:\nAddress: 127.0.0.1\nPort: 40443");
+                status.setText("SNI Spoof Proxy\nStatus: STOPPED\n\nProxy: 127.0.0.1:40443\nForced SNI: www.hcaptcha.com\n\nUse v2ray/HTTP Custom with:\nAddress: 127.0.0.1\nPort: 40443");
                 status.setTextSize(14);
                 status.setPadding(0, 0, 0, 30);
                 
@@ -295,26 +291,10 @@ jobs:
             
             private void startNativeProxy() {
                 try {
-                    // Determine architecture
-                    String arch = System.getProperty("os.arch");
-                    String abi;
-                    if (arch.contains("aarch64") || arch.contains("arm64")) {
-                        abi = "arm64-v8a";
-                    } else if (arch.contains("arm")) {
-                        abi = "armeabi-v7a";
-                    } else if (arch.contains("86_64")) {
-                        abi = "x86_64";
-                    } else {
-                        abi = "x86";
-                    }
-                    
-                    Log.d(TAG, "Architecture: " + arch + " using ABI: " + abi);
-                    
-                    // Get binary from assets based on architecture
-                    File binary = new File(getFilesDir(), "sni_proxy_" + abi);
+                    File binary = new File(getFilesDir(), "sni_proxy");
                     if (!binary.exists()) {
-                        Log.d(TAG, "Copying binary from assets/" + abi + "/sni_proxy");
-                        try (InputStream in = getAssets().open(abi + "/sni_proxy");
+                        Log.d(TAG, "Copying binary from assets");
+                        try (InputStream in = getAssets().open("sni_proxy");
                              FileOutputStream out = new FileOutputStream(binary)) {
                             byte[] buffer = new byte[8192];
                             int len;
