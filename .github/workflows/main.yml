@@ -34,15 +34,30 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
       
+    - name: Install NDK 25c (compatible version)
+      run: |
+        # Remove the default NDK if it exists
+        if [ -d "$ANDROID_HOME/ndk" ]; then
+          rm -rf $ANDROID_HOME/ndk/*
+        fi
+        
+        # Download and install NDK 25c specifically
+        cd $ANDROID_HOME
+        wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+        unzip -q android-ndk-r25c-linux.zip
+        mv android-ndk-r25c ndk/25.1.8937393
+        
+        # Set the NDK environment variable
+        echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.1.8937393" >> $GITHUB_ENV
+        
     - name: Install gomobile
       run: |
         go install golang.org/x/mobile/cmd/gomobile@latest
         go install golang.org/x/mobile/cmd/gobind@latest
         gomobile init
         
-    - name: Add mobile dependency (traditional method)
+    - name: Add mobile dependency
       run: |
-        # Add the mobile module as a direct dependency
         go get golang.org/x/mobile@latest
         go mod tidy
         
@@ -52,16 +67,29 @@ jobs:
         sed -i "s/104.19.229.21/${{ github.event.inputs.target_ip }}/g" sni.go
         sed -i "s/www.hcaptcha.com/${{ github.event.inputs.fake_sni }}/g" sni.go
         
-        # Build the AAR
+        # Build the AAR with explicit NDK path
+        export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.1.8937393
         gomobile bind -target=android -o app/libs/snispoof.aar .
         
-    - name: Setup Gradle wrapper
+    - name: Create gradle wrapper
       run: |
         cd app
-        # Create gradle wrapper if it doesn't exist
-        if [ ! -f gradlew ]; then
-          gradle wrapper
+        # Create simple gradle wrapper files
+        cat > gradlew << 'EOF'
+        #!/bin/sh
+        GRADLE_VERSION=8.0
+        GRADLE_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+        GRADLE_ZIP="gradle-${GRADLE_VERSION}-bin.zip"
+        GRADLE_DIR="gradle-${GRADLE_VERSION}"
+        
+        if [ ! -d "$GRADLE_DIR" ]; then
+            wget -q $GRADLE_URL
+            unzip -q $GRADLE_ZIP
+            rm $GRADLE_ZIP
         fi
+        
+        $GRADLE_DIR/bin/gradle "$@"
+        EOF
         chmod +x gradlew
         
     - name: Build APK
