@@ -40,9 +40,16 @@ jobs:
         go install golang.org/x/mobile/cmd/gobind@latest
         gomobile init
         
+    - name: Add tool dependency and download mobile module
+      run: |
+        # This records the tool directive in go.mod
+        go get -tool golang.org/x/mobile/cmd/gobind
+        # Download the mobile module dependencies
+        go mod download
+        
     - name: Build AAR from Go code
       run: |
-        # Update config if needed
+        # Update config with workflow inputs
         sed -i "s/104.19.229.21/${{ github.event.inputs.target_ip }}/g" sni.go
         sed -i "s/www.hcaptcha.com/${{ github.event.inputs.fake_sni }}/g" sni.go
         
