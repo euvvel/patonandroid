@@ -104,7 +104,7 @@ jobs:
         GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -o sni_proxy sni.go
         
         # ============================================
-        # 2. CREATE PURE JAVA ANDROID APP (NO KOTLIN)
+        # 2. CREATE PURE JAVA ANDROID APP
         # ============================================
         mkdir -p app/src/main/assets
         mkdir -p app/src/main/java/com/snispoof
@@ -154,7 +154,7 @@ jobs:
                 startBtn.setTextSize(18);
                 startBtn.setOnClickListener(v -> {
                     startForegroundService(new Intent(this, ProxyService.class));
-                    status.setText("SNI Spoof Proxy\nStatus: RUNNING\n\nProxy active on 127.0.0.1:40443");
+                    status.setText("SNI Spoof Proxy\nStatus: RUNNING\n\nProxy active on 127.0.0.1:40443\nConfigure v2ray to use this port");
                     startBtn.setEnabled(false);
                 });
                 
@@ -175,8 +175,8 @@ jobs:
         import android.os.Build;
         import android.os.IBinder;
         import java.io.File;
+        import java.io.FileOutputStream;
         import java.io.InputStream;
-        import java.io.OutputStream;
         
         public class ProxyService extends Service {
             private Process process;
@@ -198,7 +198,7 @@ jobs:
                     File binary = new File(getFilesDir(), "sni_proxy");
                     if (!binary.exists()) {
                         try (InputStream in = getAssets().open("sni_proxy");
-                             OutputStream out = binary.openOutputStream()) {
+                             FileOutputStream out = new FileOutputStream(binary)) {
                             byte[] buffer = new byte[8192];
                             int len;
                             while ((len = in.read(buffer)) > 0) {
@@ -244,7 +244,7 @@ jobs:
         include ':app'
         EOF
         
-        # build.gradle (no Kotlin plugin)
+        # build.gradle
         cat > build.gradle << 'EOF'
         buildscript {
             repositories {
@@ -257,7 +257,7 @@ jobs:
         }
         EOF
         
-        # app/build.gradle (pure Java, no Kotlin)
+        # app/build.gradle
         cat > app/build.gradle << 'EOF'
         plugins {
             id 'com.android.application'
