@@ -230,7 +230,7 @@ jobs:
         }
         EOF
         
-        # settings.gradle (must have pluginManagement with repositories)
+        # settings.gradle (repositories only here, not in build.gradle)
         cat > settings.gradle << 'EOF'
         pluginManagement {
             repositories {
@@ -240,7 +240,7 @@ jobs:
             }
         }
         dependencyResolutionManagement {
-            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
             repositories {
                 google()
                 mavenCentral()
@@ -250,23 +250,12 @@ jobs:
         include ':app'
         EOF
         
-        # Project build.gradle
+        # Project build.gradle (no repositories here)
         cat > build.gradle << 'EOF'
         buildscript {
-            repositories {
-                google()
-                mavenCentral()
-            }
             dependencies {
                 classpath 'com.android.tools.build:gradle:8.5.0'
                 classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0'
-            }
-        }
-        
-        allprojects {
-            repositories {
-                google()
-                mavenCentral()
             }
         }
         EOF
