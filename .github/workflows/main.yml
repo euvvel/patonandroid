@@ -40,12 +40,11 @@ jobs:
         go install golang.org/x/mobile/cmd/gobind@latest
         gomobile init
         
-    - name: Add tool dependency and download mobile module
+    - name: Add mobile dependency (traditional method)
       run: |
-        # This records the tool directive in go.mod
-        go get -tool golang.org/x/mobile/cmd/gobind
-        # Download the mobile module dependencies
-        go mod download
+        # Add the mobile module as a direct dependency
+        go get golang.org/x/mobile@latest
+        go mod tidy
         
     - name: Build AAR from Go code
       run: |
@@ -56,11 +55,19 @@ jobs:
         # Build the AAR
         gomobile bind -target=android -o app/libs/snispoof.aar .
         
+    - name: Setup Gradle wrapper
+      run: |
+        cd app
+        # Create gradle wrapper if it doesn't exist
+        if [ ! -f gradlew ]; then
+          gradle wrapper
+        fi
+        chmod +x gradlew
+        
     - name: Build APK
       run: |
         cd app
-        chmod +x gradlew 2>/dev/null || (gradle wrapper && chmod +x gradlew)
-        ./gradlew assembleRelease
+        ./gradlew assembleRelease --no-daemon
         
     - name: Upload APK
       uses: actions/upload-artifact@v4
