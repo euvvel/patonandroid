@@ -1,4 +1,4 @@
-name: Build SNI Spoof APK
+name: Build SNI Spoof APKKK
 
 on:
   workflow_dispatch:
@@ -230,7 +230,48 @@ jobs:
         }
         EOF
         
-        # build.gradle
+        # settings.gradle (must have pluginManagement with repositories)
+        cat > settings.gradle << 'EOF'
+        pluginManagement {
+            repositories {
+                google()
+                mavenCentral()
+                gradlePluginPortal()
+            }
+        }
+        dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+        rootProject.name = "SNI Spoof"
+        include ':app'
+        EOF
+        
+        # Project build.gradle
+        cat > build.gradle << 'EOF'
+        buildscript {
+            repositories {
+                google()
+                mavenCentral()
+            }
+            dependencies {
+                classpath 'com.android.tools.build:gradle:8.5.0'
+                classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0'
+            }
+        }
+        
+        allprojects {
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+        EOF
+        
+        # App build.gradle
         cat > app/build.gradle << 'EOF'
         plugins {
             id 'com.android.application'
@@ -260,33 +301,6 @@ jobs:
             implementation 'androidx.appcompat:appcompat:1.6.1'
             implementation 'androidx.core:core-ktx:1.12.0'
         }
-        EOF
-        
-        # Project build.gradle
-        cat > build.gradle << 'EOF'
-        buildscript {
-            repositories {
-                google()
-                mavenCentral()
-            }
-            dependencies {
-                classpath 'com.android.tools.build:gradle:8.5.0'
-                classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0'
-            }
-        }
-        EOF
-        
-        # settings.gradle
-        cat > settings.gradle << 'EOF'
-        pluginManagement {
-            repositories {
-                google()
-                mavenCentral()
-                gradlePluginPortal()
-            }
-        }
-        rootProject.name = 'SNI Spoof'
-        include ':app'
         EOF
         
         # gradle.properties
