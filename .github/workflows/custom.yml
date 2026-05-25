@@ -10,11 +10,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.21'
-        
     - name: Setup Java
       uses: actions/setup-java@v4
       with:
@@ -24,136 +19,13 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
     
-    - name: Build everything
+    - name: Build APK
       run: |
         # ============================================
-        # 1. CREATE GO SNI SPOOF BINARY
-        # ============================================
-        cat > sni.go << 'EOF'
-        package main
-        
-        import (
-            "crypto/tls"
-            "fmt"
-            "io"
-            "log"
-            "net"
-            "os"
-            "time"
-        )
-        
-        const (
-            TARGET_IP   = "104.19.229.21"
-            TARGET_PORT = 443
-            FAKE_SNI    = "www.hcaptcha.com"
-            PROXY_PORT  = 40443
-        )
-        
-        func main() {
-            // Log to file for debugging
-            f, _ := os.OpenFile("/data/local/tmp/sni_proxy.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-            if f != nil {
-                log.SetOutput(f)
-                defer f.Close()
-            }
-            
-            log.Printf("SNI Spoof Proxy starting...")
-            log.Printf("Target: %s:%d, Fake SNI: %s", TARGET_IP, TARGET_PORT, FAKE_SNI)
-            log.Printf("Proxy listening on 127.0.0.1:%d", PROXY_PORT)
-            
-            go performSpoof()
-            startProxy()
-        }
-        
-        func performSpoof() {
-            time.Sleep(2 * time.Second)
-            targetAddr := fmt.Sprintf("%s:%d", TARGET_IP, TARGET_PORT)
-            log.Printf("Starting spoof sequence to %s", targetAddr)
-            
-            fakeConn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
-            if err != nil {
-                log.Printf("Fake connection error: %v", err)
-                return
-            }
-            fakeTLS := tls.Client(fakeConn, &tls.Config{ServerName: FAKE_SNI, InsecureSkipVerify: true})
-            go fakeTLS.Handshake()
-            time.Sleep(50 * time.Millisecond)
-            fakeConn.Close()
-            log.Printf("Fake ClientHello sent")
-            
-            time.Sleep(100 * time.Millisecond)
-            
-            realConn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
-            if err != nil {
-                log.Printf("Real connection error: %v", err)
-                return
-            }
-            defer realConn.Close()
-            realTLS := tls.Client(realConn, &tls.Config{ServerName: FAKE_SNI, InsecureSkipVerify: true})
-            if err := realTLS.Handshake(); err == nil {
-                log.Printf("SUCCESS! DPI WHITELISTED!")
-            } else {
-                log.Printf("Verification failed: %v", err)
-            }
-        }
-        
-        func startProxy() {
-            listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", PROXY_PORT))
-            if err != nil {
-                log.Printf("Failed to listen: %v", err)
-                return
-            }
-            log.Printf("Proxy listening on 127.0.0.1:%d", PROXY_PORT)
-            for {
-                client, err := listener.Accept()
-                if err != nil {
-                    continue
-                }
-                go handle(client)
-            }
-        }
-        
-        func handle(client net.Conn) {
-            defer client.Close()
-            targetAddr := fmt.Sprintf("%s:%d", TARGET_IP, TARGET_PORT)
-            target, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
-            if err != nil {
-                return
-            }
-            defer target.Close()
-            
-            tlsTarget := tls.Client(target, &tls.Config{ServerName: FAKE_SNI, InsecureSkipVerify: true})
-            if err := tlsTarget.Handshake(); err != nil {
-                return
-            }
-            
-            go func() { io.Copy(tlsTarget, client) }()
-            io.Copy(client, tlsTarget)
-        }
-        EOF
-        
-        # Build for Android - using pure Go without CGO
-        # Use GOARCH=arm64 with GOARM=7 for better compatibility
-        mkdir -p app/src/main/assets
-        
-        # Try building with different flags
-        CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -tags netgo -ldflags="-w -s" -o sni_proxy sni.go || \
-        CGO_ENABLED=0 GOOS=android GOARCH=arm GOARM=7 go build -tags netgo -ldflags="-w -s" -o sni_proxy sni.go || \
-        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o sni_proxy sni.go
-        
-        # Check if build succeeded
-        if [ -f sni_proxy ]; then
-            file sni_proxy
-            cp sni_proxy app/src/main/assets/
-        else
-            echo "Build failed"
-            exit 1
-        fi
-        
-        # ============================================
-        # 2. CREATE SIMPLE ANDROID APP
+        # CREATE ANDROID APP (Pure Java)
         # ============================================
         mkdir -p app/src/main/java/com/snispoof
+        mkdir -p app/src/main/res/values
         
         cat > app/src/main/AndroidManifest.xml << 'EOF'
         <?xml version="1.0" encoding="utf-8"?>
@@ -161,9 +33,9 @@ jobs:
             package="com.snispoof">
             <uses-permission android:name="android.permission.INTERNET" />
             <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-            <application android:label="SNI Spoof" android:usesCleartextTraffic="true">
-                <activity android:name=".MainActivity" android:exported="true"
-                    android:theme="@android:style/Theme.DeviceDefault.Light.DarkActionBar">
+            <application android:label="SNI Spoof" android:usesCleartextTraffic="true"
+                android:theme="@android:style/Theme.DeviceDefault.Light.DarkActionBar">
+                <activity android:name=".MainActivity" android:exported="true">
                     <intent-filter>
                         <action android:name="android.intent.action.MAIN" />
                         <category android:name="android.intent.category.LAUNCHER" />
@@ -178,8 +50,6 @@ jobs:
         package com.snispoof;
         import android.content.Intent;
         import android.os.Bundle;
-        import android.os.Build;
-        import android.view.View;
         import android.widget.Button;
         import android.widget.LinearLayout;
         import android.widget.TextView;
@@ -187,9 +57,6 @@ jobs:
         import androidx.appcompat.app.AppCompatActivity;
         
         public class MainActivity extends AppCompatActivity {
-            private TextView status;
-            private Button startBtn;
-            
             @Override
             protected void onCreate(Bundle savedInstanceState) {
                 super.onCreate(savedInstanceState);
@@ -198,35 +65,29 @@ jobs:
                 layout.setOrientation(LinearLayout.VERTICAL);
                 layout.setPadding(50, 50, 50, 50);
                 
-                status = new TextView(this);
-                status.setText("SNI Spoof Proxy\nStatus: STOPPED\n\nProxy: 127.0.0.1:40443\nForced SNI: www.hcaptcha.com\n\nUse v2ray/HTTP Custom with:\nAddress: 127.0.0.1\nPort: 40443");
-                status.setTextSize(14);
-                status.setPadding(0, 0, 0, 30);
+                TextView title = new TextView(this);
+                title.setText("SNI Spoof Proxy");
+                title.setTextSize(22);
+                title.setPadding(0, 0, 0, 30);
                 
-                startBtn = new Button(this);
+                TextView info = new TextView(this);
+                info.setText("Target: 104.19.229.21:443\nFake SNI: www.hcaptcha.com\nProxy Port: 40443\n\nThis app creates a local proxy that forces all TLS connections to use www.hcaptcha.com as SNI, bypassing DPI censorship.");
+                info.setTextSize(14);
+                info.setPadding(0, 0, 0, 30);
+                
+                Button startBtn = new Button(this);
                 startBtn.setText("START PROXY");
                 startBtn.setTextSize(18);
-                startBtn.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        try {
-                            Intent intent = new Intent(MainActivity.this, ProxyService.class);
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                startForegroundService(intent);
-                            } else {
-                                startService(intent);
-                            }
-                            status.setText("SNI Spoof Proxy\nStatus: RUNNING\n\nProxy active on 127.0.0.1:40443\n\nDPI should be whitelisted now");
-                            startBtn.setEnabled(false);
-                            startBtn.setText("PROXY RUNNING");
-                            Toast.makeText(MainActivity.this, "Proxy Started", Toast.LENGTH_SHORT).show();
-                        } catch (Exception e) {
-                            Toast.makeText(MainActivity.this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                        }
-                    }
+                startBtn.setOnClickListener(v -> {
+                    Intent intent = new Intent(MainActivity.this, ProxyService.class);
+                    startForegroundService(intent);
+                    Toast.makeText(MainActivity.this, "Proxy Started on port 40443", Toast.LENGTH_LONG).show();
+                    startBtn.setEnabled(false);
+                    startBtn.setText("PROXY RUNNING");
                 });
                 
-                layout.addView(status);
+                layout.addView(title);
+                layout.addView(info);
                 layout.addView(startBtn);
                 setContentView(layout);
             }
@@ -243,15 +104,30 @@ jobs:
         import android.os.Build;
         import android.os.IBinder;
         import android.util.Log;
-        import java.io.File;
-        import java.io.FileOutputStream;
+        import java.io.IOException;
         import java.io.InputStream;
-        import java.io.BufferedReader;
-        import java.io.InputStreamReader;
+        import java.io.OutputStream;
+        import java.net.ServerSocket;
+        import java.net.Socket;
+        import javax.net.ssl.SSLSocket;
+        import javax.net.ssl.SSLSocketFactory;
+        import javax.net.ssl.SSLContext;
+        import javax.net.ssl.TrustManager;
+        import javax.net.ssl.X509TrustManager;
+        import java.security.cert.X509Certificate;
+        import java.util.concurrent.ExecutorService;
+        import java.util.concurrent.Executors;
         
         public class ProxyService extends Service {
             private static final String TAG = "SNIProxy";
-            private Process process;
+            private static final String TARGET_IP = "104.19.229.21";
+            private static final int TARGET_PORT = 443;
+            private static final String FAKE_SNI = "www.hcaptcha.com";
+            private static final int PROXY_PORT = 40443;
+            
+            private ServerSocket serverSocket;
+            private ExecutorService executor;
+            private boolean running = false;
             
             @Override
             public void onCreate() {
@@ -259,7 +135,12 @@ jobs:
                 Log.d(TAG, "Service creating");
                 createNotificationChannel();
                 startForeground(1, createNotification());
-                startNativeProxy();
+                
+                // Perform spoof sequence
+                new Thread(this::performSpoof).start();
+                
+                // Start proxy server
+                startProxyServer();
             }
             
             private void createNotificationChannel() {
@@ -279,7 +160,7 @@ jobs:
             private Notification createNotification() {
                 Notification.Builder builder = new Notification.Builder(this, "sni_channel")
                     .setContentTitle("SNI Spoof Proxy")
-                    .setContentText("Running on 127.0.0.1:40443")
+                    .setContentText("Running on 127.0.0.1:" + PROXY_PORT)
                     .setSmallIcon(android.R.drawable.ic_menu_share)
                     .setPriority(Notification.PRIORITY_LOW);
                 
@@ -289,60 +170,141 @@ jobs:
                 return builder.build();
             }
             
-            private void startNativeProxy() {
+            private void performSpoof() {
                 try {
-                    File binary = new File(getFilesDir(), "sni_proxy");
-                    if (!binary.exists()) {
-                        Log.d(TAG, "Copying binary from assets");
-                        try (InputStream in = getAssets().open("sni_proxy");
-                             FileOutputStream out = new FileOutputStream(binary)) {
-                            byte[] buffer = new byte[8192];
-                            int len;
-                            while ((len = in.read(buffer)) > 0) {
-                                out.write(buffer, 0, len);
-                            }
+                    Log.d(TAG, "Phase 1: Sending fake ClientHello to " + TARGET_IP);
+                    
+                    // Create trust manager that accepts all certificates
+                    TrustManager[] trustAllCerts = new TrustManager[]{
+                        new X509TrustManager() {
+                            public X509Certificate[] getAcceptedIssuers() { return null; }
+                            public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                            public void checkServerTrusted(X509Certificate[] certs, String authType) {}
                         }
-                    }
-                    binary.setExecutable(true);
+                    };
+                    SSLContext sslContext = SSLContext.getInstance("TLS");
+                    sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
+                    SSLSocketFactory factory = sslContext.getSocketFactory();
                     
-                    Log.d(TAG, "Starting native proxy: " + binary.getAbsolutePath());
-                    process = Runtime.getRuntime().exec(new String[]{binary.getAbsolutePath()});
+                    // Fake connection - send and abort
+                    Socket fakeSocket = new Socket(TARGET_IP, TARGET_PORT);
+                    fakeSocket.setSoTimeout(3000);
+                    SSLSocket fakeSSL = (SSLSocket) factory.createSocket(fakeSocket, TARGET_IP, TARGET_PORT, true);
+                    fakeSSL.startHandshake();
+                    Thread.sleep(50);
+                    fakeSSL.close();
+                    fakeSocket.close();
+                    Log.d(TAG, "Fake ClientHello sent, connection killed");
                     
-                    // Read stderr for debugging
-                    new Thread(() -> {
-                        try {
-                            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()));
-                            String line;
-                            while ((line = reader.readLine()) != null) {
-                                Log.e(TAG, "Proxy stderr: " + line);
-                            }
-                        } catch (Exception e) {}
-                    }).start();
+                    Thread.sleep(100);
                     
-                    // Read stdout
-                    new Thread(() -> {
-                        try {
-                            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-                            String line;
-                            while ((line = reader.readLine()) != null) {
-                                Log.d(TAG, "Proxy: " + line);
-                            }
-                        } catch (Exception e) {}
-                    }).start();
-                    
-                    Log.d(TAG, "Native proxy started successfully");
+                    // Real connection to verify
+                    Socket realSocket = new Socket(TARGET_IP, TARGET_PORT);
+                    SSLSocket realSSL = (SSLSocket) factory.createSocket(realSocket, TARGET_IP, TARGET_PORT, true);
+                    realSSL.startHandshake();
+                    Log.d(TAG, "SUCCESS! DPI whitelisted!");
+                    realSSL.close();
+                    realSocket.close();
                     
                 } catch (Exception e) {
-                    Log.e(TAG, "Failed to start native proxy", e);
+                    Log.e(TAG, "Spoof failed: " + e.getMessage());
+                }
+            }
+            
+            private void startProxyServer() {
+                executor = Executors.newCachedThreadPool();
+                running = true;
+                
+                try {
+                    serverSocket = new ServerSocket(PROXY_PORT);
+                    Log.d(TAG, "Proxy listening on port " + PROXY_PORT);
+                    
+                    while (running) {
+                        Socket clientSocket = serverSocket.accept();
+                        executor.submit(() -> handleClient(clientSocket));
+                    }
+                } catch (IOException e) {
+                    Log.e(TAG, "Server error: " + e.getMessage());
+                }
+            }
+            
+            private void handleClient(Socket clientSocket) {
+                try {
+                    // Create trust manager that accepts all certificates
+                    TrustManager[] trustAllCerts = new TrustManager[]{
+                        new X509TrustManager() {
+                            public X509Certificate[] getAcceptedIssuers() { return null; }
+                            public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                            public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+                        }
+                    };
+                    SSLContext sslContext = SSLContext.getInstance("TLS");
+                    sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
+                    SSLSocketFactory factory = sslContext.getSocketFactory();
+                    
+                    // Connect to target
+                    Socket targetSocket = new Socket(TARGET_IP, TARGET_PORT);
+                    SSLSocket targetSSL = (SSLSocket) factory.createSocket(targetSocket, TARGET_IP, TARGET_PORT, true);
+                    targetSSL.setUseClientMode(true);
+                    
+                    // Force the fake SNI
+                    java.lang.reflect.Field field = targetSSL.getClass().getDeclaredField("host");
+                    field.setAccessible(true);
+                    field.set(targetSSL, FAKE_SNI);
+                    
+                    targetSSL.startHandshake();
+                    
+                    // Proxy data
+                    InputStream clientIn = clientSocket.getInputStream();
+                    OutputStream clientOut = clientSocket.getOutputStream();
+                    InputStream targetIn = targetSSL.getInputStream();
+                    OutputStream targetOut = targetSSL.getOutputStream();
+                    
+                    Thread clientToTarget = new Thread(() -> {
+                        try {
+                            byte[] buffer = new byte[8192];
+                            int len;
+                            while ((len = clientIn.read(buffer)) > 0) {
+                                targetOut.write(buffer, 0, len);
+                                targetOut.flush();
+                            }
+                        } catch (IOException e) {}
+                    });
+                    
+                    Thread targetToClient = new Thread(() -> {
+                        try {
+                            byte[] buffer = new byte[8192];
+                            int len;
+                            while ((len = targetIn.read(buffer)) > 0) {
+                                clientOut.write(buffer, 0, len);
+                                clientOut.flush();
+                            }
+                        } catch (IOException e) {}
+                    });
+                    
+                    clientToTarget.start();
+                    targetToClient.start();
+                    
+                    clientToTarget.join();
+                    targetToClient.join();
+                    
+                    targetSSL.close();
+                    targetSocket.close();
+                    clientSocket.close();
+                    
+                } catch (Exception e) {
+                    Log.e(TAG, "Proxy error: " + e.getMessage());
+                    try { clientSocket.close(); } catch (IOException ex) {}
                 }
             }
             
             @Override
             public void onDestroy() {
-                Log.d(TAG, "Service destroying");
-                if (process != null) {
-                    process.destroy();
-                }
+                running = false;
+                try {
+                    if (serverSocket != null) serverSocket.close();
+                } catch (IOException e) {}
+                if (executor != null) executor.shutdown();
                 super.onDestroy();
             }
             
@@ -353,43 +315,6 @@ jobs:
         }
         EOF
         
-        # Generate debug keystore
-        keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug, O=Android, C=US" -storepass android -keypass android
-        
-        # settings.gradle
-        cat > settings.gradle << 'EOF'
-        pluginManagement {
-            repositories {
-                google()
-                mavenCentral()
-                gradlePluginPortal()
-            }
-        }
-        dependencyResolutionManagement {
-            repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
-            repositories {
-                google()
-                mavenCentral()
-            }
-        }
-        rootProject.name = "SNI Spoof"
-        include ':app'
-        EOF
-        
-        # build.gradle
-        cat > build.gradle << 'EOF'
-        buildscript {
-            repositories {
-                google()
-                mavenCentral()
-            }
-            dependencies {
-                classpath 'com.android.tools.build:gradle:8.5.0'
-            }
-        }
-        EOF
-        
-        # app/build.gradle
         cat > app/build.gradle << 'EOF'
         plugins {
             id 'com.android.application'
@@ -422,11 +347,6 @@ jobs:
                     minifyEnabled false
                 }
             }
-            
-            compileOptions {
-                sourceCompatibility JavaVersion.VERSION_17
-                targetCompatibility JavaVersion.VERSION_17
-            }
         }
         
         dependencies {
@@ -434,14 +354,46 @@ jobs:
         }
         EOF
         
-        # gradle.properties
+        # Generate debug keystore
+        keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug, O=Android, C=US" -storepass android -keypass android
+        
+        cat > settings.gradle << 'EOF'
+        pluginManagement {
+            repositories {
+                google()
+                mavenCentral()
+                gradlePluginPortal()
+            }
+        }
+        dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
+        rootProject.name = "SNI Spoof"
+        include ':app'
+        EOF
+        
+        cat > build.gradle << 'EOF'
+        buildscript {
+            repositories {
+                google()
+                mavenCentral()
+            }
+            dependencies {
+                classpath 'com.android.tools.build:gradle:8.5.0'
+            }
+        }
+        EOF
+        
         cat > gradle.properties << 'EOF'
         org.gradle.jvmargs=-Xmx2048m
         android.useAndroidX=true
         android.nonTransitiveRClass=true
         EOF
         
-        # gradle wrapper
         mkdir -p gradle/wrapper
         cat > gradlew << 'EOF'
         #!/bin/sh
@@ -460,7 +412,7 @@ jobs:
         curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar
         
         # ============================================
-        # 3. BUILD APK
+        # BUILD APK
         # ============================================
         chmod +x gradlew
         ./gradlew assembleRelease --no-daemon
