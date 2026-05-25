@@ -27,8 +27,7 @@ jobs:
         
         cat > app/src/main/AndroidManifest.xml << 'EOF'
         <?xml version="1.0" encoding="utf-8"?>
-        <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-            package="com.simple">
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <application android:label="Simple">
                 <activity android:name=".MainActivity" android:exported="true">
                     <intent-filter>
@@ -51,7 +50,9 @@ jobs:
             protected void onCreate(Bundle savedInstanceState) {
                 super.onCreate(savedInstanceState);
                 TextView tv = new TextView(this);
-                tv.setText("Hello World");
+                tv.setText("Hello World!\n\nAPK installed successfully!");
+                tv.setTextSize(18);
+                tv.setPadding(50, 50, 50, 50);
                 setContentView(tv);
             }
         }
@@ -63,6 +64,7 @@ jobs:
         }
         
         android {
+            namespace 'com.simple'
             compileSdk 34
             
             defaultConfig {
@@ -73,15 +75,42 @@ jobs:
                 versionName "1.0"
             }
             
+            signingConfigs {
+                release {
+                    storeFile file("../debug.keystore")
+                    storePassword "android"
+                    keyAlias "androiddebugkey"
+                    keyPassword "android"
+                }
+            }
+            
             buildTypes {
                 release {
+                    signingConfig signingConfigs.release
                     minifyEnabled false
                 }
             }
         }
         EOF
         
+        # Generate debug keystore
+        keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug, O=Android, C=US" -storepass android -keypass android
+        
         cat > settings.gradle << 'EOF'
+        pluginManagement {
+            repositories {
+                google()
+                mavenCentral()
+                gradlePluginPortal()
+            }
+        }
+        dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+            repositories {
+                google()
+                mavenCentral()
+            }
+        }
         rootProject.name = "Simple"
         include ':app'
         EOF
