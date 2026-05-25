@@ -1,4 +1,4 @@
-name: Build Minimal Test APK
+name: Build Simple APK
 
 on:
   workflow_dispatch:
@@ -21,14 +21,15 @@ jobs:
     
     - name: Build APK
       run: |
-        mkdir -p app/src/main/java/com/testapp
+        mkdir -p app/src/main/java/com/simple
+        mkdir -p app/src/main/res/layout
         mkdir -p app/src/main/res/values
         
         cat > app/src/main/AndroidManifest.xml << 'EOF'
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-            package="com.testapp">
-            <application android:label="Test App" android:theme="@android:style/Theme.DeviceDefault.Light">
+            package="com.simple">
+            <application android:label="Simple">
                 <activity android:name=".MainActivity" android:exported="true">
                     <intent-filter>
                         <action android:name="android.intent.action.MAIN" />
@@ -39,8 +40,8 @@ jobs:
         </manifest>
         EOF
         
-        cat > app/src/main/java/com/testapp/MainActivity.java << 'EOF'
-        package com.testapp;
+        cat > app/src/main/java/com/simple/MainActivity.java << 'EOF'
+        package com.simple;
         import android.app.Activity;
         import android.os.Bundle;
         import android.widget.TextView;
@@ -50,9 +51,7 @@ jobs:
             protected void onCreate(Bundle savedInstanceState) {
                 super.onCreate(savedInstanceState);
                 TextView tv = new TextView(this);
-                tv.setText("Test App Works!\n\nIf you see this, the APK builds and installs correctly.");
-                tv.setTextSize(18);
-                tv.setPadding(50, 50, 50, 50);
+                tv.setText("Hello World");
                 setContentView(tv);
             }
         }
@@ -64,54 +63,26 @@ jobs:
         }
         
         android {
-            namespace 'com.testapp'
             compileSdk 34
             
             defaultConfig {
-                applicationId "com.testapp"
+                applicationId "com.simple"
                 minSdk 21
                 targetSdk 34
                 versionCode 1
                 versionName "1.0"
             }
             
-            signingConfigs {
-                release {
-                    storeFile file("../debug.keystore")
-                    storePassword "android"
-                    keyAlias "androiddebugkey"
-                    keyPassword "android"
-                }
-            }
-            
             buildTypes {
                 release {
-                    signingConfig signingConfigs.release
                     minifyEnabled false
                 }
             }
         }
         EOF
         
-        # Generate debug keystore
-        keytool -genkey -v -keystore debug.keystore -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug, O=Android, C=US" -storepass android -keypass android
-        
         cat > settings.gradle << 'EOF'
-        pluginManagement {
-            repositories {
-                google()
-                mavenCentral()
-                gradlePluginPortal()
-            }
-        }
-        dependencyResolutionManagement {
-            repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
-            repositories {
-                google()
-                mavenCentral()
-            }
-        }
-        rootProject.name = "TestApp"
+        rootProject.name = "Simple"
         include ':app'
         EOF
         
@@ -155,5 +126,5 @@ jobs:
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: test-app
+        name: simple-app
         path: app/build/outputs/apk/release/*.apk
