@@ -1,4 +1,4 @@
-name: Build SNI Spoof APKKK
+name: Build Minimal Test APK
 
 on:
   workflow_dispatch:
@@ -21,312 +21,39 @@ jobs:
     
     - name: Build APK
       run: |
-        mkdir -p app/src/main/java/com/snispoof
+        mkdir -p app/src/main/java/com/testapp
         mkdir -p app/src/main/res/values
         
         cat > app/src/main/AndroidManifest.xml << 'EOF'
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-            package="com.snispoof">
-            <uses-permission android:name="android.permission.INTERNET" />
-            <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-            <application android:label="SNI Spoof" android:usesCleartextTraffic="true"
-                android:theme="@android:style/Theme.DeviceDefault.Light.DarkActionBar">
+            package="com.testapp">
+            <application android:label="Test App" android:theme="@android:style/Theme.DeviceDefault.Light">
                 <activity android:name=".MainActivity" android:exported="true">
                     <intent-filter>
                         <action android:name="android.intent.action.MAIN" />
                         <category android:name="android.intent.category.LAUNCHER" />
                     </intent-filter>
                 </activity>
-                <service android:name=".ProxyService" android:exported="false" />
             </application>
         </manifest>
         EOF
         
-        cat > app/src/main/java/com/snispoof/MainActivity.java << 'EOF'
-        package com.snispoof;
-        import android.content.Intent;
+        cat > app/src/main/java/com/testapp/MainActivity.java << 'EOF'
+        package com.testapp;
+        import android.app.Activity;
         import android.os.Bundle;
-        import android.widget.Button;
-        import android.widget.LinearLayout;
         import android.widget.TextView;
-        import android.widget.Toast;
-        import androidx.appcompat.app.AppCompatActivity;
         
-        public class MainActivity extends AppCompatActivity {
-            private Button startBtn;
-            private TextView status;
-            private boolean isRunning = false;
-            
+        public class MainActivity extends Activity {
             @Override
             protected void onCreate(Bundle savedInstanceState) {
                 super.onCreate(savedInstanceState);
-                
-                LinearLayout layout = new LinearLayout(this);
-                layout.setOrientation(LinearLayout.VERTICAL);
-                layout.setPadding(50, 50, 50, 50);
-                
-                TextView title = new TextView(this);
-                title.setText("SNI Spoof Proxy");
-                title.setTextSize(22);
-                title.setPadding(0, 0, 0, 20);
-                
-                status = new TextView(this);
-                status.setText("Status: STOPPED\n\nTarget: 104.19.229.21:443\nFake SNI: www.hcaptcha.com\nProxy Port: 40443");
-                status.setTextSize(14);
-                status.setPadding(0, 0, 0, 30);
-                
-                startBtn = new Button(this);
-                startBtn.setText("START PROXY");
-                startBtn.setTextSize(18);
-                startBtn.setOnClickListener(v -> {
-                    if (!isRunning) {
-                        Intent intent = new Intent(MainActivity.this, ProxyService.class);
-                        startForegroundService(intent);
-                        isRunning = true;
-                        status.setText("Status: RUNNING\n\nProxy active on 127.0.0.1:40443\n\nConfigure v2ray/HTTP Custom to use:\nAddress: 127.0.0.1\nPort: 40443");
-                        startBtn.setText("PROXY RUNNING");
-                        startBtn.setEnabled(false);
-                        Toast.makeText(MainActivity.this, "Proxy Started", Toast.LENGTH_SHORT).show();
-                    }
-                });
-                
-                layout.addView(title);
-                layout.addView(status);
-                layout.addView(startBtn);
-                setContentView(layout);
-            }
-        }
-        EOF
-        
-        cat > app/src/main/java/com/snispoof/ProxyService.java << 'EOF'
-        package com.snispoof;
-        import android.app.Notification;
-        import android.app.NotificationChannel;
-        import android.app.NotificationManager;
-        import android.app.Service;
-        import android.content.Intent;
-        import android.os.Build;
-        import android.os.IBinder;
-        import android.util.Log;
-        import java.io.IOException;
-        import java.io.InputStream;
-        import java.io.OutputStream;
-        import java.net.ServerSocket;
-        import java.net.Socket;
-        import javax.net.ssl.SSLSocket;
-        import javax.net.ssl.SSLSocketFactory;
-        import javax.net.ssl.SSLContext;
-        import javax.net.ssl.TrustManager;
-        import javax.net.ssl.X509TrustManager;
-        import java.security.cert.X509Certificate;
-        import java.util.concurrent.ExecutorService;
-        import java.util.concurrent.Executors;
-        import java.util.concurrent.TimeUnit;
-        
-        public class ProxyService extends Service {
-            private static final String TAG = "SNIProxy";
-            private static final String TARGET_IP = "104.19.229.21";
-            private static final int TARGET_PORT = 443;
-            private static final String FAKE_SNI = "www.hcaptcha.com";
-            private static final int PROXY_PORT = 40443;
-            
-            private ServerSocket serverSocket;
-            private ExecutorService executor;
-            private boolean running = false;
-            private Thread spoofThread;
-            private Thread serverThread;
-            
-            @Override
-            public void onCreate() {
-                super.onCreate();
-                Log.d(TAG, "Service onCreate");
-                createNotificationChannel();
-                startForeground(1, createNotification());
-                
-                // Start spoof sequence in background
-                spoofThread = new Thread(this::performSpoof);
-                spoofThread.start();
-                
-                // Start proxy server in background
-                serverThread = new Thread(this::startProxyServer);
-                serverThread.start();
-            }
-            
-            private void createNotificationChannel() {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    NotificationChannel channel = new NotificationChannel(
-                        "sni_channel",
-                        "SNI Spoof Proxy",
-                        NotificationManager.IMPORTANCE_LOW
-                    );
-                    NotificationManager manager = getSystemService(NotificationManager.class);
-                    if (manager != null) {
-                        manager.createNotificationChannel(channel);
-                    }
-                }
-            }
-            
-            private Notification createNotification() {
-                Notification.Builder builder = new Notification.Builder(this, "sni_channel")
-                    .setContentTitle("SNI Spoof Proxy")
-                    .setContentText("Running on port " + PROXY_PORT)
-                    .setSmallIcon(android.R.drawable.ic_menu_share)
-                    .setPriority(Notification.PRIORITY_LOW);
-                
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    builder.setChannelId("sni_channel");
-                }
-                return builder.build();
-            }
-            
-            private void performSpoof() {
-                try {
-                    // Wait a bit for network
-                    Thread.sleep(2000);
-                    
-                    Log.d(TAG, "=== Starting SNI Spoof Sequence ===");
-                    
-                    // Create trust manager that accepts all certificates
-                    TrustManager[] trustAllCerts = new TrustManager[]{
-                        new X509TrustManager() {
-                            public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-                            public void checkClientTrusted(X509Certificate[] certs, String authType) {}
-                            public void checkServerTrusted(X509Certificate[] certs, String authType) {}
-                        }
-                    };
-                    SSLContext sslContext = SSLContext.getInstance("TLS");
-                    sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
-                    SSLSocketFactory factory = sslContext.getSocketFactory();
-                    
-                    // Phase 1: Fake connection - send ClientHello and abort
-                    Log.d(TAG, "Phase 1: Sending fake ClientHello to " + TARGET_IP);
-                    Socket fakeSocket = new Socket();
-                    fakeSocket.connect(new java.net.InetSocketAddress(TARGET_IP, TARGET_PORT), 5000);
-                    SSLSocket fakeSSL = (SSLSocket) factory.createSocket(fakeSocket, TARGET_IP, TARGET_PORT, true);
-                    fakeSSL.startHandshake();
-                    Thread.sleep(50);
-                    fakeSSL.close();
-                    fakeSocket.close();
-                    Log.d(TAG, "Fake ClientHello sent, connection killed at 50ms");
-                    
-                    // Phase 2: Wait for DPI
-                    Log.d(TAG, "Phase 2: Waiting 100ms for DPI to process...");
-                    Thread.sleep(100);
-                    
-                    // Phase 3: Verify connection
-                    Log.d(TAG, "Phase 3: Verifying connection is whitelisted");
-                    Socket realSocket = new Socket();
-                    realSocket.connect(new java.net.InetSocketAddress(TARGET_IP, TARGET_PORT), 5000);
-                    SSLSocket realSSL = (SSLSocket) factory.createSocket(realSocket, TARGET_IP, TARGET_PORT, true);
-                    realSSL.startHandshake();
-                    Log.d(TAG, "✅ SUCCESS! DPI has been whitelisted!");
-                    realSSL.close();
-                    realSocket.close();
-                    
-                } catch (Exception e) {
-                    Log.e(TAG, "Spoof sequence error: " + e.getMessage());
-                }
-            }
-            
-            private void startProxyServer() {
-                executor = Executors.newCachedThreadPool();
-                running = true;
-                
-                try {
-                    serverSocket = new ServerSocket(PROXY_PORT);
-                    Log.d(TAG, "✅ Proxy server listening on port " + PROXY_PORT);
-                    
-                    while (running) {
-                        Socket clientSocket = serverSocket.accept();
-                        executor.submit(() -> handleClient(clientSocket));
-                    }
-                } catch (IOException e) {
-                    Log.e(TAG, "Server socket error: " + e.getMessage());
-                }
-            }
-            
-            private void handleClient(Socket clientSocket) {
-                Socket targetSocket = null;
-                SSLSocket targetSSL = null;
-                
-                try {
-                    // Create trust manager
-                    TrustManager[] trustAllCerts = new TrustManager[]{
-                        new X509TrustManager() {
-                            public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-                            public void checkClientTrusted(X509Certificate[] certs, String authType) {}
-                            public void checkServerTrusted(X509Certificate[] certs, String authType) {}
-                        }
-                    };
-                    SSLContext sslContext = SSLContext.getInstance("TLS");
-                    sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
-                    SSLSocketFactory factory = sslContext.getSocketFactory();
-                    
-                    // Connect to target
-                    targetSocket = new Socket();
-                    targetSocket.connect(new java.net.InetSocketAddress(TARGET_IP, TARGET_PORT), 10000);
-                    targetSSL = (SSLSocket) factory.createSocket(targetSocket, TARGET_IP, TARGET_PORT, true);
-                    targetSSL.setUseClientMode(true);
-                    targetSSL.startHandshake();
-                    
-                    // Get streams
-                    final InputStream clientIn = clientSocket.getInputStream();
-                    final OutputStream clientOut = clientSocket.getOutputStream();
-                    final InputStream targetIn = targetSSL.getInputStream();
-                    final OutputStream targetOut = targetSSL.getOutputStream();
-                    
-                    // Bidirectional copy
-                    Thread t1 = new Thread(() -> {
-                        try {
-                            byte[] buffer = new byte[8192];
-                            int len;
-                            while ((len = clientIn.read(buffer)) > 0) {
-                                targetOut.write(buffer, 0, len);
-                                targetOut.flush();
-                            }
-                        } catch (IOException e) {}
-                    });
-                    
-                    Thread t2 = new Thread(() -> {
-                        try {
-                            byte[] buffer = new byte[8192];
-                            int len;
-                            while ((len = targetIn.read(buffer)) > 0) {
-                                clientOut.write(buffer, 0, len);
-                                clientOut.flush();
-                            }
-                        } catch (IOException e) {}
-                    });
-                    
-                    t1.start();
-                    t2.start();
-                    t1.join();
-                    t2.join();
-                    
-                } catch (Exception e) {
-                    Log.e(TAG, "Proxy handler error: " + e.getMessage());
-                } finally {
-                    try { if (targetSSL != null) targetSSL.close(); } catch (Exception e) {}
-                    try { if (targetSocket != null) targetSocket.close(); } catch (Exception e) {}
-                    try { clientSocket.close(); } catch (Exception e) {}
-                }
-            }
-            
-            @Override
-            public void onDestroy() {
-                Log.d(TAG, "Service onDestroy");
-                running = false;
-                try {
-                    if (serverSocket != null) serverSocket.close();
-                } catch (IOException e) {}
-                if (executor != null) executor.shutdown();
-                super.onDestroy();
-            }
-            
-            @Override
-            public IBinder onBind(Intent intent) {
-                return null;
+                TextView tv = new TextView(this);
+                tv.setText("Test App Works!\n\nIf you see this, the APK builds and installs correctly.");
+                tv.setTextSize(18);
+                tv.setPadding(50, 50, 50, 50);
+                setContentView(tv);
             }
         }
         EOF
@@ -337,11 +64,11 @@ jobs:
         }
         
         android {
-            namespace 'com.snispoof'
+            namespace 'com.testapp'
             compileSdk 34
             
             defaultConfig {
-                applicationId "com.snispoof"
+                applicationId "com.testapp"
                 minSdk 21
                 targetSdk 34
                 versionCode 1
@@ -364,10 +91,6 @@ jobs:
                 }
             }
         }
-        
-        dependencies {
-            implementation 'androidx.appcompat:appcompat:1.6.1'
-        }
         EOF
         
         # Generate debug keystore
@@ -388,7 +111,7 @@ jobs:
                 mavenCentral()
             }
         }
-        rootProject.name = "SNI Spoof"
+        rootProject.name = "TestApp"
         include ':app'
         EOF
         
@@ -407,7 +130,6 @@ jobs:
         cat > gradle.properties << 'EOF'
         org.gradle.jvmargs=-Xmx2048m
         android.useAndroidX=true
-        android.nonTransitiveRClass=true
         EOF
         
         mkdir -p gradle/wrapper
@@ -427,12 +149,11 @@ jobs:
         
         curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar
         
-        # Build APK
         chmod +x gradlew
         ./gradlew assembleRelease --no-daemon
         
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: sni-spoof-proxy
+        name: test-app
         path: app/build/outputs/apk/release/*.apk
