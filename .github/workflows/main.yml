@@ -1,0 +1,62 @@
+name: Build SNI Spoof APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ip:
+        description: 'Target IP address'
+        required: false
+        default: '104.19.229.21'
+      fake_sni:
+        description: 'Fake SNI domain'
+        required: false
+        default: 'www.hcaptcha.com'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+        
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+      
+    - name: Install gomobile
+      run: |
+        go install golang.org/x/mobile/cmd/gomobile@latest
+        go install golang.org/x/mobile/cmd/gobind@latest
+        gomobile init
+        
+    - name: Build AAR from Go code
+      run: |
+        # Update config if needed
+        sed -i "s/104.19.229.21/${{ github.event.inputs.target_ip }}/g" sni.go
+        sed -i "s/www.hcaptcha.com/${{ github.event.inputs.fake_sni }}/g" sni.go
+        
+        # Build the AAR
+        gomobile bind -target=android -o app/libs/snispoof.aar .
+        
+    - name: Build APK
+      run: |
+        cd app
+        chmod +x gradlew 2>/dev/null || (gradle wrapper && chmod +x gradlew)
+        ./gradlew assembleRelease
+        
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: sni-spoof-apk
+        path: app/build/outputs/apk/release/*.apk
