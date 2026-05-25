@@ -80,8 +80,12 @@ jobs:
         
         func startProxy() {
             listener, _ := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", PROXY_PORT))
+            log.Printf("Proxy listening on 127.0.0.1:%d", PROXY_PORT)
             for {
-                client, _ := listener.Accept()
+                client, err := listener.Accept()
+                if err != nil {
+                    continue
+                }
                 go handle(client)
             }
         }
@@ -89,13 +93,18 @@ jobs:
         func handle(client net.Conn) {
             defer client.Close()
             targetAddr := fmt.Sprintf("%s:%d", TARGET_IP, TARGET_PORT)
-            target, _ := net.DialTimeout("tcp", targetAddr, 10*time.Second)
+            target, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
+            if err != nil {
+                return
+            }
             defer target.Close()
             
             tlsTarget := tls.Client(target, &tls.Config{ServerName: FAKE_SNI, InsecureSkipVerify: true})
-            tlsTarget.Handshake()
+            if err := tlsTarget.Handshake(); err != nil {
+                return
+            }
             
-            go io.Copy(tlsTarget, client)
+            go func() { io.Copy(tlsTarget, client) }()
             io.Copy(client, tlsTarget)
         }
         EOF
@@ -104,7 +113,7 @@ jobs:
         GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -o sni_proxy sni.go
         
         # ============================================
-        # 2. CREATE ANDROID APP WITH SIGNING
+        # 2. CREATE ANDROID APP
         # ============================================
         mkdir -p app/src/main/assets
         mkdir -p app/src/main/java/com/snispoof
@@ -117,7 +126,8 @@ jobs:
             <uses-permission android:name="android.permission.INTERNET" />
             <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
             <application android:label="SNI Spoof" android:usesCleartextTraffic="true">
-                <activity android:name=".MainActivity" android:exported="true">
+                <activity android:name=".MainActivity" android:exported="true"
+                    android:theme="@android:style/Theme.DeviceDefault.Light.DarkActionBar">
                     <intent-filter>
                         <action android:name="android.intent.action.MAIN" />
                         <category android:name="android.intent.category.LAUNCHER" />
@@ -132,31 +142,41 @@ jobs:
         package com.snispoof;
         import android.content.Intent;
         import android.os.Bundle;
+        import android.view.View;
         import android.widget.Button;
         import android.widget.LinearLayout;
         import android.widget.TextView;
         import androidx.appcompat.app.AppCompatActivity;
         
         public class MainActivity extends AppCompatActivity {
+            private TextView status;
+            private Button startBtn;
+            
             @Override
             protected void onCreate(Bundle savedInstanceState) {
                 super.onCreate(savedInstanceState);
+                
                 LinearLayout layout = new LinearLayout(this);
                 layout.setOrientation(LinearLayout.VERTICAL);
                 layout.setPadding(50, 50, 50, 50);
                 
-                TextView status = new TextView(this);
-                status.setText("SNI Spoof Proxy\nStatus: STOPPED\n\nProxy: 127.0.0.1:40443\nForced SNI: www.hcaptcha.com");
-                status.setTextSize(16);
+                status = new TextView(this);
+                status.setText("SNI Spoof Proxy\nStatus: STOPPED\n\nProxy: 127.0.0.1:40443\nForced SNI: www.hcaptcha.com\n\nUse v2ray/HTTP Custom with:\nAddress: 127.0.0.1\nPort: 40443");
+                status.setTextSize(14);
                 status.setPadding(0, 0, 0, 30);
                 
-                Button startBtn = new Button(this);
+                startBtn = new Button(this);
                 startBtn.setText("START PROXY");
                 startBtn.setTextSize(18);
-                startBtn.setOnClickListener(v -> {
-                    startForegroundService(new Intent(this, ProxyService.class));
-                    status.setText("SNI Spoof Proxy\nStatus: RUNNING\n\nProxy active on 127.0.0.1:40443\nConfigure v2ray to use this port");
-                    startBtn.setEnabled(false);
+                startBtn.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        Intent intent = new Intent(MainActivity.this, ProxyService.class);
+                        startForegroundService(intent);
+                        status.setText("SNI Spoof Proxy\nStatus: RUNNING\n\nProxy active on 127.0.0.1:40443\n\nDPI should be whitelisted now\nConfigure v2ray to use this proxy");
+                        startBtn.setEnabled(false);
+                        startBtn.setText("PROXY RUNNING");
+                    }
                 });
                 
                 layout.addView(status);
@@ -175,29 +195,64 @@ jobs:
         import android.content.Intent;
         import android.os.Build;
         import android.os.IBinder;
+        import android.util.Log;
         import java.io.File;
         import java.io.FileOutputStream;
         import java.io.InputStream;
+        import java.io.BufferedReader;
+        import java.io.InputStreamReader;
         
         public class ProxyService extends Service {
+            private static final String TAG = "SNIProxy";
             private Process process;
             
             @Override
             public void onCreate() {
                 super.onCreate();
+                Log.d(TAG, "Service creating");
+                createNotificationChannel();
+                startForeground(1, createNotification());
+                
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        startNativeProxy();
+                    }
+                }).start();
+            }
+            
+            private void createNotificationChannel() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    NotificationChannel channel = new NotificationChannel("sni_channel", "SNI Spoof", NotificationManager.IMPORTANCE_LOW);
-                    getSystemService(NotificationManager.class).createNotificationChannel(channel);
+                    NotificationChannel channel = new NotificationChannel(
+                        "sni_channel",
+                        "SNI Spoof Proxy",
+                        NotificationManager.IMPORTANCE_LOW
+                    );
+                    NotificationManager manager = getSystemService(NotificationManager.class);
+                    if (manager != null) {
+                        manager.createNotificationChannel(channel);
+                    }
                 }
-                startForeground(1, new Notification.Builder(this, "sni_channel")
+            }
+            
+            private Notification createNotification() {
+                Notification.Builder builder = new Notification.Builder(this, "sni_channel")
                     .setContentTitle("SNI Spoof Proxy")
                     .setContentText("Running on 127.0.0.1:40443")
                     .setSmallIcon(android.R.drawable.ic_menu_share)
-                    .build());
+                    .setPriority(Notification.PRIORITY_LOW);
                 
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    builder.setChannelId("sni_channel");
+                }
+                return builder.build();
+            }
+            
+            private void startNativeProxy() {
                 try {
                     File binary = new File(getFilesDir(), "sni_proxy");
                     if (!binary.exists()) {
+                        Log.d(TAG, "Copying binary from assets");
                         try (InputStream in = getAssets().open("sni_proxy");
                              FileOutputStream out = new FileOutputStream(binary)) {
                             byte[] buffer = new byte[8192];
@@ -208,20 +263,46 @@ jobs:
                         }
                     }
                     binary.setExecutable(true);
+                    
+                    Log.d(TAG, "Starting native proxy: " + binary.getAbsolutePath());
                     process = Runtime.getRuntime().exec(binary.getAbsolutePath());
+                    
+                    // Read output in background
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                                String line;
+                                while ((line = reader.readLine()) != null) {
+                                    Log.d(TAG, "Proxy: " + line);
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Error reading output", e);
+                            }
+                        }
+                    }).start();
+                    
+                    Log.d(TAG, "Native proxy started successfully");
+                    
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    Log.e(TAG, "Failed to start native proxy", e);
                 }
             }
             
             @Override
             public void onDestroy() {
-                if (process != null) process.destroy();
+                Log.d(TAG, "Service destroying");
+                if (process != null) {
+                    process.destroy();
+                }
                 super.onDestroy();
             }
             
             @Override
-            public IBinder onBind(Intent intent) { return null; }
+            public IBinder onBind(Intent intent) {
+                return null;
+            }
         }
         EOF
         
@@ -261,7 +342,7 @@ jobs:
         }
         EOF
         
-        # app/build.gradle with signing config
+        # app/build.gradle
         cat > app/build.gradle << 'EOF'
         plugins {
             id 'com.android.application'
@@ -280,12 +361,6 @@ jobs:
             }
             
             signingConfigs {
-                debug {
-                    storeFile file("../debug.keystore")
-                    storePassword "android"
-                    keyAlias "androiddebugkey"
-                    keyPassword "android"
-                }
                 release {
                     storeFile file("../debug.keystore")
                     storePassword "android"
@@ -298,9 +373,6 @@ jobs:
                 release {
                     signingConfig signingConfigs.release
                     minifyEnabled false
-                }
-                debug {
-                    signingConfig signingConfigs.debug
                 }
             }
             
@@ -341,7 +413,7 @@ jobs:
         curl -L -o gradle/wrapper/gradle-wrapper.jar https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar
         
         # ============================================
-        # 3. BUILD SIGNED APK
+        # 3. BUILD APK
         # ============================================
         chmod +x gradlew
         ./gradlew assembleRelease --no-daemon
